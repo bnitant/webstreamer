@@ -122,8 +122,8 @@ function VideoTile({
           : 'w-full aspect-video rounded-2xl bg-[#0d1527] border border-white/10 hover:border-sky-500/50 shadow-md cursor-pointer hover:shadow-glow-sm'
       }`}
     >
-      {/* Remote Audio Element — ensures microphone is always heard even when camera is off */}
-      {!item.isLocal && item.stream && (
+      {/* Remote Audio Element — ensures voice/audio plays when camera is off */}
+      {!item.isLocal && item.stream && item.isCameraOff && !item.isScreen && (
         <audio ref={audioRef} autoPlay playsInline />
       )}
 

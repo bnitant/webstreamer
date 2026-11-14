@@ -21,7 +21,7 @@ interface UseWebRTCReturn {
   isScreenSharing:    boolean
   toggleMic:          () => void
   toggleCamera:       () => void
-  startScreenShare:   (onTrackReady?: (track: MediaStreamTrack) => void) => Promise<MediaStream | null>
+  startScreenShare:   (onEnded?: () => void) => Promise<MediaStream | null>
   stopScreenShare:    (onRestoreCamera?: (track: MediaStreamTrack | null) => void) => void
   addRemoteStream:    (peerId: string, stream: MediaStream, name: string) => void
   removeRemoteStream: (peerId: string) => void
@@ -129,25 +129,44 @@ export function useWebRTC(): UseWebRTCReturn {
     setIsCameraOff(willTurnOff)
   }, [localStream, isCameraOff])
 
-  // ── Screen share ─────────────────────────────────────────
-  const startScreenShare = useCallback(async (onTrackReady?: (track: MediaStreamTrack) => void): Promise<MediaStream | null> => {
+  // ── Screen share with audio support ─────────────────────
+  const startScreenShare = useCallback(async (onEnded?: () => void): Promise<MediaStream | null> => {
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia(
-        getScreenShareConstraints(),
-      )
+      let stream: MediaStream
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia(
+          getScreenShareConstraints(),
+        )
+      } catch (err: any) {
+        if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') {
+          return null
+        }
+        // Fallback for browsers that throw when audio constraint is present
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            frameRate: { ideal: 30, max: 30 },
+            width:     { ideal: 1920 },
+            height:    { ideal: 1080 },
+            cursor:    'always',
+          } as MediaTrackConstraints,
+          audio: false,
+        })
+      }
+
       setScreenStream(stream)
       setIsScreenSharing(true)
 
       const screenVideoTrack = stream.getVideoTracks()[0]
-      if (screenVideoTrack && onTrackReady) {
-        onTrackReady(screenVideoTrack)
-      }
 
       // Auto-stop when user clicks browser's native "Stop sharing" bar
-      screenVideoTrack.addEventListener('ended', () => {
-        setScreenStream(null)
-        setIsScreenSharing(false)
-      })
+      if (screenVideoTrack) {
+        screenVideoTrack.addEventListener('ended', () => {
+          stream.getTracks().forEach((t) => t.stop())
+          setScreenStream(null)
+          setIsScreenSharing(false)
+          onEnded?.()
+        })
+      }
 
       return stream
     } catch (err) {

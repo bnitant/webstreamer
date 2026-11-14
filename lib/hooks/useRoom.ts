@@ -81,6 +81,9 @@ export function useRoom(roomId: string): UseRoomReturn {
   const sendReactionRef = useRef<((data: ReactionItem) => Promise<void>) | null>(null)
   const sendMetaRef = useRef<((data: PeerMeta) => Promise<void>) | null>(null)
   const metaMapRef = useRef<Map<string, PeerMeta>>(new Map())
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const mixedAudioTrackRef = useRef<MediaStreamTrack | null>(null)
+  const originalAudioTrackRef = useRef<MediaStreamTrack | null>(null)
 
   // ── Initialize Trystero Room ───────────────────────────────
   useEffect(() => {
@@ -240,39 +243,93 @@ export function useRoom(roomId: string): UseRoomReturn {
     }
   }, [webrtc.isMuted, webrtc.isCameraOff, localName])
 
-  // ── Screen Share with Anti-Lag Bitrate ─────────────────────
-  const startScreenShare = useCallback(async () => {
-    const screen = await webrtc.startScreenShare()
-    if (!screen || !roomRef.current) return
-
-    const screenTrack = screen.getVideoTracks()[0]
-    const localVideoTrack = webrtc.localStream?.getVideoTracks()[0]
-
-    if (localVideoTrack && screenTrack) {
-      roomRef.current.replaceTrack(localVideoTrack, screenTrack).catch(() => {
-        roomRef.current?.addStream(screen).catch(console.warn)
-      })
-    } else {
-      roomRef.current.addStream(screen).catch(console.warn)
-    }
-  }, [webrtc])
-
+  // ── Screen Share with Audio Mixing & Anti-Lag ─────────────
   const stopScreenShare = useCallback(() => {
     const screen = webrtc.screenStream
     const localVideoTrack = webrtc.localStream?.getVideoTracks()[0]
 
     webrtc.stopScreenShare()
 
-    if (!roomRef.current) return
-    if (screen && localVideoTrack) {
-      const screenTrack = screen.getVideoTracks()[0]
-      if (screenTrack) {
-        roomRef.current.replaceTrack(screenTrack, localVideoTrack).catch(console.warn)
+    if (roomRef.current) {
+      // 1. Restore video track to camera
+      if (screen && localVideoTrack) {
+        const screenTrack = screen.getVideoTracks()[0]
+        if (screenTrack) {
+          roomRef.current.replaceTrack(screenTrack, localVideoTrack).catch(console.warn)
+        }
+      } else if (screen) {
+        roomRef.current.removeStream(screen)
       }
-    } else if (screen) {
-      roomRef.current.removeStream(screen)
+
+      // 2. Restore audio track to microphone
+      if (mixedAudioTrackRef.current && originalAudioTrackRef.current) {
+        roomRef.current.replaceTrack(mixedAudioTrackRef.current, originalAudioTrackRef.current).catch(console.warn)
+      }
     }
+
+    // Clean up Web Audio mixer
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {})
+      audioContextRef.current = null
+    }
+    mixedAudioTrackRef.current = null
+    originalAudioTrackRef.current = null
   }, [webrtc])
+
+  const startScreenShare = useCallback(async () => {
+    const screen = await webrtc.startScreenShare(() => {
+      // Handles native browser "Stop sharing" bar click
+      stopScreenShare()
+    })
+    if (!screen || !roomRef.current) return
+
+    const screenVideoTrack = screen.getVideoTracks()[0]
+    const screenAudioTrack = screen.getAudioTracks()[0]
+    const localVideoTrack = webrtc.localStream?.getVideoTracks()[0]
+    const localAudioTrack = webrtc.localStream?.getAudioTracks()[0]
+
+    // ── 1. Video track handling ──
+    if (localVideoTrack && screenVideoTrack) {
+      roomRef.current.replaceTrack(localVideoTrack, screenVideoTrack).catch(() => {
+        roomRef.current?.addStream(screen).catch(console.warn)
+      })
+    } else {
+      roomRef.current.addStream(screen).catch(console.warn)
+    }
+
+    // ── 2. Screen audio transfer & mixing ──
+    if (screenAudioTrack) {
+      if (localAudioTrack) {
+        try {
+          // Mix microphone audio + screen audio together so viewers hear both!
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
+          const audioCtx = new AudioContextClass()
+          const dest = audioCtx.createMediaStreamDestination()
+
+          const micSource = audioCtx.createMediaStreamSource(new MediaStream([localAudioTrack]))
+          const screenSource = audioCtx.createMediaStreamSource(new MediaStream([screenAudioTrack]))
+
+          micSource.connect(dest)
+          screenSource.connect(dest)
+
+          const mixedTrack = dest.stream.getAudioTracks()[0]
+          if (mixedTrack) {
+            audioContextRef.current = audioCtx
+            mixedAudioTrackRef.current = mixedTrack
+            originalAudioTrackRef.current = localAudioTrack
+
+            roomRef.current.replaceTrack(localAudioTrack, mixedTrack).catch(console.warn)
+          }
+        } catch (err) {
+          console.warn('[useRoom] Web Audio mixing failed, sending screen audio directly:', err)
+          roomRef.current.replaceTrack(localAudioTrack, screenAudioTrack).catch(console.warn)
+        }
+      } else {
+        // No microphone track yet, send screen audio directly via stream
+        roomRef.current.addStream(screen).catch(console.warn)
+      }
+    }
+  }, [webrtc, stopScreenShare])
 
   // ── Send Chat Message ─────────────────────────────────────
   const sendMessage = useCallback((text: string) => {
@@ -299,6 +356,10 @@ export function useRoom(roomId: string): UseRoomReturn {
 
   // ── Leave Room ────────────────────────────────────────────
   const leaveRoom = useCallback(() => {
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {})
+      audioContextRef.current = null
+    }
     roomRef.current?.leave().catch(() => {})
     webrtc.localStream?.getTracks().forEach((t) => t.stop())
     webrtc.screenStream?.getTracks().forEach((t) => t.stop())

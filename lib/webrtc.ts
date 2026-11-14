@@ -14,9 +14,9 @@ export const RTC_CONFIG: RTCConfiguration = {
 }
 
 /**
- * Screen share constraints balanced for quality vs. lag.
- * 30fps is smoother than fighting for 60fps over P2P bandwidth.
- * Audio disabled to cut bandwidth and reduce lag.
+ * Screen share constraints with full audio transfer support.
+ * High-fidelity stereo audio for tab, video, game, and music sharing.
+ * Video balanced at 30fps / 1080p for smooth, lag-free transmission.
  */
 export function getScreenShareConstraints(): DisplayMediaStreamOptions {
   return {
@@ -26,7 +26,12 @@ export function getScreenShareConstraints(): DisplayMediaStreamOptions {
       height:    { ideal: 1080 },
       cursor:    'always',
     } as MediaTrackConstraints,
-    audio: false,
+    audio: {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl:  false,
+      channelCount:     2,
+    },
   }
 }
 
