@@ -53,14 +53,30 @@ export function useRoom(roomId: string): UseRoomReturn {
 
     // Add local tracks
     const activeStream = webrtc.isScreenSharing && webrtc.screenStream ? webrtc.screenStream : webrtc.localStream
-    if (activeStream) {
-      activeStream.getTracks().forEach((track) => {
-        const sender = pc.addTrack(track, activeStream)
-        if (track.kind === 'video') {
-          setMaxBitrate(sender, webrtc.isScreenSharing ? SCREEN_SHARE_BITRATE : CAMERA_BITRATE)
-        }
-      })
+    const audioTracks = activeStream ? activeStream.getAudioTracks() : []
+    const videoTracks = activeStream ? activeStream.getVideoTracks() : []
+
+    if (audioTracks.length > 0) {
+      audioTracks.forEach((track) => pc.addTrack(track, activeStream!))
+    } else {
+      // Ensure we can receive remote audio even if user has no microphone
+      try { pc.addTransceiver('audio', { direction: 'recvonly' }) } catch {}
     }
+
+    if (videoTracks.length > 0) {
+      videoTracks.forEach((track) => {
+        const sender = pc.addTrack(track, activeStream!)
+        setMaxBitrate(sender, webrtc.isScreenSharing ? SCREEN_SHARE_BITRATE : CAMERA_BITRATE)
+      })
+    } else {
+      // Ensure we can receive remote video even if user has no camera
+      try { pc.addTransceiver('video', { direction: 'recvonly' }) } catch {}
+    }
+
+    // Always create a data channel to guarantee active data exchange and valid SDP sections
+    try {
+      pc.createDataChannel('data')
+    } catch {}
 
     // Handle incoming remote tracks
     pc.ontrack = (event) => {
@@ -96,7 +112,10 @@ export function useRoom(roomId: string): UseRoomReturn {
 
       try {
         const pc = getOrCreatePC(socketId)
-        const offer = await pc.createOffer()
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true,
+        })
         await pc.setLocalDescription(offer)
         socket.emitOffer(socketId, pc.localDescription!)
       } catch (err) {

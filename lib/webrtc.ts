@@ -9,9 +9,8 @@ export const STUN_SERVERS: RTCIceServer[] = [
 
 export const RTC_CONFIG: RTCConfiguration = {
   iceServers: STUN_SERVERS,
-  bundlePolicy: 'max-bundle',
+  bundlePolicy: 'balanced',
   iceCandidatePoolSize: 10,
-  rtcpMuxPolicy: 'require',
 }
 
 /**
