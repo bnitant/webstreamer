@@ -162,6 +162,21 @@ export function useRoom(roomId: string): UseRoomReturn {
       const peerId = context?.peerId || ''
       if (!peerId) return
 
+      // Add to participants immediately so their card appears instantly
+      setParticipants((prev) => {
+        if (prev.find((p) => p.peerId === peerId)) return prev
+        return [
+          ...prev,
+          {
+            peerId,
+            name: 'Friend',
+            isMuted: false,
+            isCameraOff: true,
+            quality: 'good',
+          },
+        ]
+      })
+
       // Announce our metadata to the new peer
       metaAction.send({
         name: localName,

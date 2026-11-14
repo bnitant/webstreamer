@@ -290,18 +290,33 @@ export default function VideoGrid({
       })
     }
 
-    // 2. Add Remote Streams
-    remoteStreams.forEach((entry) => {
-      const p = participants.find((part) => part.peerId === entry.peerId)
+    // 2. Add ALL Connected Remote Participants (visible whether camera is on or off)
+    participants.forEach((p) => {
+      const streamEntry = remoteStreams.find((rs) => rs.peerId === p.peerId)
       list.push({
-        id:          entry.peerId,
-        name:        entry.name || p?.name || 'Guest',
-        stream:      entry.stream,
+        id:          p.peerId,
+        name:        p.name || 'Friend',
+        stream:      streamEntry?.stream || null,
         isLocal:     false,
-        isMuted:     p?.isMuted ?? false,
-        isCameraOff: p?.isCameraOff ?? false,
+        isMuted:     p.isMuted ?? false,
+        isCameraOff: streamEntry?.stream ? p.isCameraOff : true,
         isScreen:    false,
       })
+    })
+
+    // Also include any remote streams not yet indexed in participants
+    remoteStreams.forEach((entry) => {
+      if (!list.find((item) => item.id === entry.peerId)) {
+        list.push({
+          id:          entry.peerId,
+          name:        entry.name || 'Friend',
+          stream:      entry.stream,
+          isLocal:     false,
+          isMuted:     false,
+          isCameraOff: false,
+          isScreen:    false,
+        })
+      }
     })
 
     // 3. Add Local User tile
