@@ -1,5 +1,18 @@
+import dynamic from 'next/dynamic'
 import { Metadata } from 'next'
-import RoomClient from '@/components/RoomClient'
+
+// Disable SSR for RoomClient — it uses browser-only APIs (WebRTC, navigator, window)
+const RoomClient = dynamic(() => import('@/components/RoomClient'), {
+  ssr: false,
+  loading: () => (
+    <div className="min-h-screen bg-[#0a0f1e] flex flex-col items-center justify-center gap-4">
+      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center shadow-lg animate-pulse">
+        <span className="text-lg font-bold text-white">W</span>
+      </div>
+      <p className="text-sky-400 text-sm animate-pulse">Loading room…</p>
+    </div>
+  ),
+})
 
 interface PageProps {
   params: { roomId: string }

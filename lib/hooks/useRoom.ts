@@ -41,6 +41,9 @@ export function useRoom(roomId: string): UseRoomReturn {
   const webrtc  = useWebRTC()
   const socket  = useSocket(roomId, localName)
 
+  // Use PeerJS peer ID as our signaling identity
+  const myId = socket.myPeerId
+
   // Map of peerId -> RTCPeerConnection
   const pcsRef  = useRef<Map<string, RTCPeerConnection>>(new Map())
   const makingOffer = useRef<Set<string>>(new Set())
@@ -72,7 +75,7 @@ export function useRoom(roomId: string): UseRoomReturn {
 
     // ICE candidate forwarding
     pc.onicecandidate = (event) => {
-      if (event.candidate) {
+      if (event.candidate && myId) {
         socket.emitIceCandidate(peerId, event.candidate.toJSON())
       }
     }

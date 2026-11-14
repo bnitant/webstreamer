@@ -55,7 +55,11 @@ export function useWebRTC(): UseWebRTCReturn {
           setLocalStream(stream)
           setIsCameraOff(true)
         } catch {
-          console.error('[useWebRTC] No media available.')
+          console.error('[useWebRTC] No media available — joining without camera/mic.')
+          // Set an empty stream so components don't crash on null
+          setLocalStream(new MediaStream())
+          setIsCameraOff(true)
+          setIsMuted(true)
         }
       }
     }

@@ -39,11 +39,15 @@ const nextConfig = {
       },
     ]
   },
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     config.externals.push({
       'utf-8-validate': 'commonjs utf-8-validate',
-      bufferutil: 'commonjs bufferutil',
+      bufferutil:       'commonjs bufferutil',
     })
+    if (isServer) {
+      // PeerJS is browser-only; prevent server-side bundling
+      config.externals.push('peerjs')
+    }
     return config
   },
 }
