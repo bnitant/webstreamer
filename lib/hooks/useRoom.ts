@@ -1,8 +1,8 @@
-import { useEffect, useRef, useCallback, useState } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useWebRTC, RemoteStreamEntry } from './useWebRTC'
 import { useSocket, ChatMessage, Participant } from './useSocket'
-import { RTC_CONFIG, setMaxBitrate, CAMERA_BITRATE } from '../webrtc'
+import { RTC_CONFIG, setMaxBitrate, CAMERA_BITRATE, SCREEN_SHARE_BITRATE } from '../webrtc'
 
 interface UseRoomReturn {
   localStream:        ReturnType<typeof useWebRTC>['localStream']
@@ -27,9 +27,9 @@ function getLocalName(): string {
   if (typeof window === 'undefined') return 'Guest'
   const stored = sessionStorage.getItem('webstreamer-name')
   if (stored) return stored
-  const adj = ['Blue','Cyan','Sky','Nova','Arc','Flux']
-  const noun= ['Wave','Stream','Pixel','Beam','Link','Node']
-  const name = `${adj[Math.floor(Math.random()*adj.length)]} ${noun[Math.floor(Math.random()*noun.length)]}`
+  const adj = ['Blue', 'Cyan', 'Sky', 'Nova', 'Arc', 'Flux']
+  const noun = ['Wave', 'Stream', 'Pixel', 'Beam', 'Link', 'Node']
+  const name = `${adj[Math.floor(Math.random() * adj.length)]} ${noun[Math.floor(Math.random() * noun.length)]}`
   sessionStorage.setItem('webstreamer-name', name)
   return name
 }
@@ -38,14 +38,11 @@ export function useRoom(roomId: string): UseRoomReturn {
   const router = useRouter()
   const localName = getLocalName()
 
-  const webrtc  = useWebRTC()
-  const socket  = useSocket(roomId, localName)
-
-  // Use PeerJS peer ID as our signaling identity
-  const myId = socket.myPeerId
+  const webrtc = useWebRTC()
+  const socket = useSocket(roomId, localName)
 
   // Map of peerId -> RTCPeerConnection
-  const pcsRef  = useRef<Map<string, RTCPeerConnection>>(new Map())
+  const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map())
   const makingOffer = useRef<Set<string>>(new Set())
 
   // ── Create / get RTCPeerConnection ────────────────────────
@@ -55,12 +52,12 @@ export function useRoom(roomId: string): UseRoomReturn {
     const pc = new RTCPeerConnection(RTC_CONFIG)
 
     // Add local tracks
-    if (webrtc.localStream) {
-      webrtc.localStream.getTracks().forEach((track) => {
-        const sender = pc.addTrack(track, webrtc.localStream!)
-        // Set camera bitrate
+    const activeStream = webrtc.isScreenSharing && webrtc.screenStream ? webrtc.screenStream : webrtc.localStream
+    if (activeStream) {
+      activeStream.getTracks().forEach((track) => {
+        const sender = pc.addTrack(track, activeStream)
         if (track.kind === 'video') {
-          setMaxBitrate(sender, CAMERA_BITRATE)
+          setMaxBitrate(sender, webrtc.isScreenSharing ? SCREEN_SHARE_BITRATE : CAMERA_BITRATE)
         }
       })
     }
@@ -75,7 +72,7 @@ export function useRoom(roomId: string): UseRoomReturn {
 
     // ICE candidate forwarding
     pc.onicecandidate = (event) => {
-      if (event.candidate && myId) {
+      if (event.candidate) {
         socket.emitIceCandidate(peerId, event.candidate.toJSON())
       }
     }
@@ -94,36 +91,36 @@ export function useRoom(roomId: string): UseRoomReturn {
   // ── Signaling: user joined → create offer ─────────────────
   useEffect(() => {
     socket.onUserJoined(async ({ socketId }) => {
-      const pc = getOrCreatePC(socketId)
+      if (makingOffer.current.has(socketId)) return
       makingOffer.current.add(socketId)
+
       try {
+        const pc = getOrCreatePC(socketId)
         const offer = await pc.createOffer()
         await pc.setLocalDescription(offer)
         socket.emitOffer(socketId, pc.localDescription!)
       } catch (err) {
-        console.error('[useRoom] createOffer failed:', err)
+        console.warn('[useRoom] createOffer error:', err)
       } finally {
         makingOffer.current.delete(socketId)
       }
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [socket.onUserJoined, getOrCreatePC])
+  }, [socket.onUserJoined, getOrCreatePC, socket])
 
   // ── Signaling: receive offer → answer ────────────────────
   useEffect(() => {
     socket.onOffer(async (from, offer) => {
-      const pc = getOrCreatePC(from)
       try {
+        const pc = getOrCreatePC(from)
         await pc.setRemoteDescription(new RTCSessionDescription(offer))
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
         socket.emitAnswer(from, pc.localDescription!)
       } catch (err) {
-        console.error('[useRoom] handle offer failed:', err)
+        console.warn('[useRoom] handle offer error:', err)
       }
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [socket.onOffer, getOrCreatePC])
+  }, [socket.onOffer, getOrCreatePC, socket])
 
   // ── Signaling: receive answer ─────────────────────────────
   useEffect(() => {
@@ -133,10 +130,9 @@ export function useRoom(roomId: string): UseRoomReturn {
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(answer))
       } catch (err) {
-        console.error('[useRoom] handle answer failed:', err)
+        console.warn('[useRoom] handle answer error:', err)
       }
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket.onAnswer])
 
   // ── Signaling: ICE candidates ─────────────────────────────
@@ -147,21 +143,22 @@ export function useRoom(roomId: string): UseRoomReturn {
       try {
         await pc.addIceCandidate(new RTCIceCandidate(candidate))
       } catch (err) {
-        console.warn('[useRoom] addIceCandidate failed:', err)
+        // Can safely ignore candidate errors during transition
       }
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket.onIceCandidate])
 
   // ── User left ─────────────────────────────────────────────
   useEffect(() => {
     socket.onUserLeft((socketId) => {
       const pc = pcsRef.current.get(socketId)
-      if (pc) { pc.close(); pcsRef.current.delete(socketId) }
+      if (pc) {
+        pc.close()
+        pcsRef.current.delete(socketId)
+      }
       webrtc.removeRemoteStream(socketId)
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [socket.onUserLeft, webrtc.removeRemoteStream])
+  }, [socket.onUserLeft, webrtc])
 
   // ── Cleanup on unmount ────────────────────────────────────
   useEffect(() => {
@@ -170,6 +167,34 @@ export function useRoom(roomId: string): UseRoomReturn {
       pcsRef.current.clear()
     }
   }, [])
+
+  // ── Screen share with anti-lag track broadcasting ──────────
+  const startScreenShare = useCallback(async () => {
+    await webrtc.startScreenShare((screenTrack) => {
+      // Replace video track in all active peer connections
+      pcsRef.current.forEach((pc) => {
+        const sender = pc.getSenders().find((s) => s.track?.kind === 'video')
+        if (sender) {
+          sender.replaceTrack(screenTrack).then(() => {
+            setMaxBitrate(sender, SCREEN_SHARE_BITRATE)
+          }).catch(console.warn)
+        }
+      })
+    })
+  }, [webrtc])
+
+  const stopScreenShare = useCallback(() => {
+    webrtc.stopScreenShare((cameraTrack) => {
+      pcsRef.current.forEach((pc) => {
+        const sender = pc.getSenders().find((s) => s.track?.kind === 'video')
+        if (sender && cameraTrack) {
+          sender.replaceTrack(cameraTrack).then(() => {
+            setMaxBitrate(sender, CAMERA_BITRATE)
+          }).catch(console.warn)
+        }
+      })
+    })
+  }, [webrtc])
 
   const leaveRoom = useCallback(() => {
     pcsRef.current.forEach((pc) => pc.close())
@@ -192,8 +217,8 @@ export function useRoom(roomId: string): UseRoomReturn {
     localName,
     toggleMic:        webrtc.toggleMic,
     toggleCamera:     webrtc.toggleCamera,
-    startScreenShare: webrtc.startScreenShare,
-    stopScreenShare:  webrtc.stopScreenShare,
+    startScreenShare,
+    stopScreenShare,
     sendMessage:      socket.sendMessage,
     leaveRoom,
   }

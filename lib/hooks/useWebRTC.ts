@@ -1,3 +1,5 @@
+'use client'
+
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   getCameraConstraints,
@@ -21,43 +23,39 @@ interface UseWebRTCReturn {
   isScreenSharing:    boolean
   toggleMic:          () => void
   toggleCamera:       () => void
-  startScreenShare:   () => Promise<void>
-  stopScreenShare:    () => void
+  startScreenShare:   (onTrackReady?: (track: MediaStreamTrack) => void) => Promise<MediaStream | null>
+  stopScreenShare:    (onRestoreCamera?: (track: MediaStreamTrack | null) => void) => void
   addRemoteStream:    (peerId: string, stream: MediaStream, name: string) => void
   removeRemoteStream: (peerId: string) => void
-  replaceTrackInPeers:(track: MediaStreamTrack, oldTrack: MediaStreamTrack | null) => void
 }
 
 export function useWebRTC(): UseWebRTCReturn {
   const [localStream,     setLocalStream]     = useState<MediaStream | null>(null)
   const [screenStream,    setScreenStream]    = useState<MediaStream | null>(null)
-  const [remoteStreams,   setRemoteStreams]    = useState<RemoteStreamEntry[]>([])
+  const [remoteStreams,   setRemoteStreams]   = useState<RemoteStreamEntry[]>([])
   const [isMuted,         setIsMuted]         = useState(false)
   const [isCameraOff,     setIsCameraOff]     = useState(false)
   const [isScreenSharing, setIsScreenSharing] = useState(false)
 
-  // Ref for peer connections (managed externally via useRoom)
-  const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map())
-
   // ── Acquire local media on mount ─────────────────────────
   useEffect(() => {
-    let stream: MediaStream | null = null
+    let activeStream: MediaStream | null = null
 
     async function init() {
       try {
-        stream = await navigator.mediaDevices.getUserMedia(getCameraConstraints())
-        setLocalStream(stream)
-      } catch (err) {
-        console.warn('[useWebRTC] Could not get user media:', err)
-        // Try audio-only fallback
+        activeStream = await navigator.mediaDevices.getUserMedia(getCameraConstraints())
+        setLocalStream(activeStream)
+      } catch {
+        // Try audio-only fallback if camera is unavailable
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-          setLocalStream(stream)
+          activeStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+          setLocalStream(activeStream)
           setIsCameraOff(true)
         } catch {
-          console.error('[useWebRTC] No media available — joining without camera/mic.')
-          // Set an empty stream so components don't crash on null
-          setLocalStream(new MediaStream())
+          // If neither camera nor microphone is detected, join gracefully
+          console.info('[useWebRTC] No camera or microphone found. Joined in listen/screen-share mode.')
+          const empty = new MediaStream()
+          setLocalStream(empty)
           setIsCameraOff(true)
           setIsMuted(true)
         }
@@ -67,14 +65,16 @@ export function useWebRTC(): UseWebRTCReturn {
     init()
 
     return () => {
-      stream?.getTracks().forEach((t) => t.stop())
+      activeStream?.getTracks().forEach((t) => t.stop())
     }
   }, [])
 
   // ── Mic toggle ───────────────────────────────────────────
   const toggleMic = useCallback(() => {
     if (!localStream) return
-    localStream.getAudioTracks().forEach((t) => {
+    const audioTracks = localStream.getAudioTracks()
+    if (audioTracks.length === 0) return
+    audioTracks.forEach((t) => {
       t.enabled = !t.enabled
     })
     setIsMuted((m) => !m)
@@ -83,14 +83,16 @@ export function useWebRTC(): UseWebRTCReturn {
   // ── Camera toggle ────────────────────────────────────────
   const toggleCamera = useCallback(() => {
     if (!localStream) return
-    localStream.getVideoTracks().forEach((t) => {
+    const videoTracks = localStream.getVideoTracks()
+    if (videoTracks.length === 0) return
+    videoTracks.forEach((t) => {
       t.enabled = !t.enabled
     })
     setIsCameraOff((c) => !c)
   }, [localStream])
 
   // ── Screen share ─────────────────────────────────────────
-  const startScreenShare = useCallback(async () => {
+  const startScreenShare = useCallback(async (onTrackReady?: (track: MediaStreamTrack) => void): Promise<MediaStream | null> => {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia(
         getScreenShareConstraints(),
@@ -98,41 +100,34 @@ export function useWebRTC(): UseWebRTCReturn {
       setScreenStream(stream)
       setIsScreenSharing(true)
 
-      // Replace video track in all peer connections
       const screenVideoTrack = stream.getVideoTracks()[0]
-      peerConnectionsRef.current.forEach((pc) => {
-        const sender = pc.getSenders().find((s) => s.track?.kind === 'video')
-        if (sender && screenVideoTrack) {
-          sender.replaceTrack(screenVideoTrack).then(() => {
-            setMaxBitrate(sender, SCREEN_SHARE_BITRATE)
-          })
-        }
+      if (screenVideoTrack && onTrackReady) {
+        onTrackReady(screenVideoTrack)
+      }
+
+      // Auto-stop when user clicks browser's native "Stop sharing" bar
+      screenVideoTrack.addEventListener('ended', () => {
+        setScreenStream(null)
+        setIsScreenSharing(false)
       })
 
-      // Auto-stop when user clicks browser "Stop sharing"
-      screenVideoTrack.addEventListener('ended', () => {
-        stopScreenShare()
-      })
+      return stream
     } catch (err) {
-      console.warn('[useWebRTC] Screen share cancelled or failed:', err)
+      console.warn('[useWebRTC] Screen share cancelled or rejected:', err)
+      return null
     }
   }, [])
 
-  const stopScreenShare = useCallback(() => {
-    if (!screenStream) return
-    screenStream.getTracks().forEach((t) => t.stop())
-    setScreenStream(null)
+  const stopScreenShare = useCallback((onRestoreCamera?: (track: MediaStreamTrack | null) => void) => {
+    if (screenStream) {
+      screenStream.getTracks().forEach((t) => t.stop())
+      setScreenStream(null)
+    }
     setIsScreenSharing(false)
 
-    // Restore camera track in peer connections
-    if (localStream) {
-      const cameraTrack = localStream.getVideoTracks()[0]
-      peerConnectionsRef.current.forEach((pc) => {
-        const sender = pc.getSenders().find((s) => s.track?.kind === 'video')
-        if (sender && cameraTrack) {
-          sender.replaceTrack(cameraTrack)
-        }
-      })
+    if (onRestoreCamera) {
+      const cameraTrack = localStream?.getVideoTracks()[0] ?? null
+      onRestoreCamera(cameraTrack)
     }
   }, [screenStream, localStream])
 
@@ -149,16 +144,6 @@ export function useWebRTC(): UseWebRTCReturn {
     setRemoteStreams((prev) => prev.filter((e) => e.peerId !== peerId))
   }, [])
 
-  const replaceTrackInPeers = useCallback(
-    (track: MediaStreamTrack, oldTrack: MediaStreamTrack | null) => {
-      peerConnectionsRef.current.forEach((pc) => {
-        const sender = pc.getSenders().find((s) => s.track === oldTrack)
-        if (sender) sender.replaceTrack(track)
-      })
-    },
-    [],
-  )
-
   return {
     localStream,
     screenStream,
@@ -172,6 +157,5 @@ export function useWebRTC(): UseWebRTCReturn {
     stopScreenShare,
     addRemoteStream,
     removeRemoteStream,
-    replaceTrackInPeers,
   }
 }
