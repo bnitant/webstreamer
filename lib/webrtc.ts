@@ -14,41 +14,38 @@ export const RTC_CONFIG: RTCConfiguration = {
 }
 
 /**
- * High-quality screen share constraints with anti-lag settings.
- * Requests 60fps, 1920px wide, and always visible cursor.
+ * Screen share constraints balanced for quality vs. lag.
+ * 30fps is smoother than fighting for 60fps over P2P bandwidth.
+ * Audio disabled to cut bandwidth and reduce lag.
  */
 export function getScreenShareConstraints(): DisplayMediaStreamOptions {
   return {
     video: {
-      frameRate: { ideal: 60, max: 60 },
-      width:     { ideal: 1920, max: 3840 },
-      height:    { ideal: 1080, max: 2160 },
+      frameRate: { ideal: 30, max: 30 },
+      width:     { ideal: 1920 },
+      height:    { ideal: 1080 },
       cursor:    'always',
     } as MediaTrackConstraints,
-    audio: {
-      echoCancellation: false,
-      noiseSuppression: false,
-      sampleRate:       44100,
-    },
+    audio: false,
   }
 }
 
 /**
- * HD camera constraints with echo cancellation and noise suppression.
+ * Camera constraints — compatible with all devices.
+ * sampleRate removed: not universally supported (causes getUserMedia failure on mobile/some browsers).
  */
 export function getCameraConstraints(): MediaStreamConstraints {
   return {
     video: {
-      width:        { ideal: 1280, max: 1920 },
-      height:       { ideal: 720,  max: 1080 },
-      frameRate:    { ideal: 30,   max: 60   },
-      facingMode:   'user',
+      width:      { ideal: 1280, max: 1920 },
+      height:     { ideal: 720,  max: 1080 },
+      frameRate:  { ideal: 30,   max: 30   },
+      facingMode: 'user',
     },
     audio: {
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl:  true,
-      sampleRate:       48000,
     },
   }
 }

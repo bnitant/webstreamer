@@ -61,14 +61,25 @@ function VideoTile({
   reaction?:    ReactionItem
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
   const [resolution, setResolution] = useState<string>('')
   const [isHovered, setIsHovered] = useState(false)
 
+  // Attach video stream
   useEffect(() => {
     if (videoRef.current && item.stream) {
       videoRef.current.srcObject = item.stream
+      videoRef.current.play().catch(() => {})
     }
   }, [item.stream])
+
+  // Attach dedicated audio element for remote participants so audio always plays
+  useEffect(() => {
+    if (audioRef.current && item.stream && !item.isLocal) {
+      audioRef.current.srcObject = item.stream
+      audioRef.current.play().catch(() => {})
+    }
+  }, [item.stream, item.isLocal])
 
   const initials = useMemo(() => {
     return item.name
@@ -111,6 +122,11 @@ function VideoTile({
           : 'w-full aspect-video rounded-2xl bg-[#0d1527] border border-white/10 hover:border-sky-500/50 shadow-md cursor-pointer hover:shadow-glow-sm'
       }`}
     >
+      {/* Remote Audio Element — ensures microphone is always heard even when camera is off */}
+      {!item.isLocal && item.stream && (
+        <audio ref={audioRef} autoPlay playsInline />
+      )}
+
       {/* Video Element or Avatar */}
       {item.stream && (!item.isCameraOff || item.isScreen) ? (
         <video
@@ -374,33 +390,33 @@ export default function VideoGrid({
   }
 
   return (
-    <div className="relative w-full h-full flex flex-col p-3 md:p-4 overflow-hidden">
+    <div className="relative w-full h-full flex flex-col p-2 sm:p-3 md:p-4 overflow-hidden">
       {/* Top Floating View Switcher Pill */}
-      <div className="absolute top-4 right-6 z-20 hidden md:flex items-center gap-1.5 glass px-3 py-1.5 rounded-full border border-white/10 bg-dark-800/80 backdrop-blur-md shadow-lg">
+      <div className="absolute top-2 right-2 sm:top-4 sm:right-6 z-20 flex items-center gap-1.5 glass px-2 sm:px-3 py-1 sm:py-1.5 rounded-full border border-white/10 bg-dark-800/80 backdrop-blur-md shadow-lg">
         <button
           onClick={toggleLayout}
           title="Switch view layout"
-          className="flex items-center gap-1.5 text-xs font-medium text-slate-300 hover:text-white transition-colors"
+          className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-medium text-slate-300 hover:text-white transition-colors"
         >
           {layoutMode === 'spotlight' ? (
             <>
-              <LayoutGrid className="w-3.5 h-3.5 text-sky-400" />
-              <span>Grid View</span>
+              <LayoutGrid className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-sky-400" />
+              <span className="hidden xs:inline">Grid View</span>
             </>
           ) : (
             <>
-              <Columns3 className="w-3.5 h-3.5 text-sky-400" />
-              <span>Stage View</span>
+              <Columns3 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-sky-400" />
+              <span className="hidden xs:inline">Stage View</span>
             </>
           )}
         </button>
       </div>
 
-      {/* ── SPOTLIGHT / STAGE LAYOUT (Google Meet Style from User Image) ── */}
+      {/* ── SPOTLIGHT / STAGE LAYOUT ── */}
       {layoutMode === 'spotlight' ? (
-        <div className="w-full h-full flex flex-col lg:flex-row gap-3 md:gap-4 overflow-hidden">
-          {/* Main Stage (Large Central View) */}
-          <div className="flex-1 h-full min-h-0 relative flex items-center justify-center overflow-hidden">
+        <div className="w-full h-full flex flex-col lg:flex-row gap-2 sm:gap-3 md:gap-4 overflow-hidden">
+          {/* Main Stage */}
+          <div className="flex-1 min-h-0 relative flex items-center justify-center overflow-hidden">
             {spotlightItem && (
               <VideoTile
                 item={spotlightItem}
@@ -412,11 +428,20 @@ export default function VideoGrid({
             )}
           </div>
 
-          {/* Right Column Filmstrip (Stacked Participant Cards) */}
+          {/* Filmstrip — horizontal scroll on mobile, vertical column on desktop */}
           {sidebarItems.length > 0 && (
-            <div className="w-full lg:w-[280px] xl:w-[320px] shrink-0 flex lg:flex-col gap-3 overflow-x-auto lg:overflow-y-auto pr-1 pb-1 lg:pb-0 scrollbar-thin scrollbar-thumb-white/10">
+            <div className="
+              w-full shrink-0
+              flex flex-row lg:flex-col
+              gap-2 sm:gap-3
+              overflow-x-auto lg:overflow-x-hidden
+              overflow-y-hidden lg:overflow-y-auto
+              lg:w-[220px] xl:w-[260px]
+              pb-1 lg:pb-0 pr-0 lg:pr-1
+              scrollbar-thin scrollbar-thumb-white/10
+            ">
               {sidebarItems.map((item) => (
-                <div key={item.id} className="min-w-[200px] lg:min-w-0">
+                <div key={item.id} className="min-w-[140px] sm:min-w-[180px] lg:min-w-0 aspect-video lg:aspect-auto">
                   <VideoTile
                     item={item}
                     isSpotlight={false}
@@ -432,16 +457,16 @@ export default function VideoGrid({
       ) : (
         /* ── BALANCED GRID VIEW (Gallery of all participants) ── */
         <div
-          className={`w-full h-full grid gap-3 md:gap-4 auto-rows-fr ${
+          className={`w-full h-full grid gap-2 sm:gap-3 md:gap-4 auto-rows-fr ${
             allItems.length === 1
               ? 'grid-cols-1'
               : allItems.length === 2
-              ? 'grid-cols-1 md:grid-cols-2'
+              ? 'grid-cols-1 sm:grid-cols-2'
               : allItems.length <= 4
               ? 'grid-cols-2'
               : allItems.length <= 6
-              ? 'grid-cols-2 lg:grid-cols-3'
-              : 'grid-cols-3'
+              ? 'grid-cols-2 md:grid-cols-3'
+              : 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4'
           }`}
         >
           {allItems.map((item) => (

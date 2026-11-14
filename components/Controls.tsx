@@ -14,27 +14,27 @@ import {
 import { motion, AnimatePresence } from 'framer-motion'
 
 interface ControlsProps {
-  isMuted:            boolean
-  isCameraOff:        boolean
-  isScreenSharing:    boolean
-  showChat:           boolean
-  showParticipants:   boolean
-  onToggleMic:        () => void
-  onToggleCamera:     () => void
-  onToggleScreenShare:() => void
-  onToggleChat:       () => void
+  isMuted:             boolean
+  isCameraOff:         boolean
+  isScreenSharing:     boolean
+  showChat:            boolean
+  showParticipants:    boolean
+  onToggleMic:         () => void
+  onToggleCamera:      () => void
+  onToggleScreenShare: () => void
+  onToggleChat:        () => void
   onToggleParticipants:() => void
-  onSendReaction?:    (emoji: string) => void
-  onLeave:            () => void
+  onSendReaction?:     (emoji: string) => void
+  onLeave:             () => void
 }
 
 interface CtrlBtnProps {
-  onClick:    () => void
-  active?:    boolean
-  danger?:    boolean
-  title:      string
-  children:   React.ReactNode
-  label?:     string
+  onClick:   () => void
+  active?:   boolean
+  danger?:   boolean
+  title:     string
+  children:  React.ReactNode
+  label?:    string
 }
 
 function CtrlBtn({ onClick, active, danger, title, children, label }: CtrlBtnProps) {
@@ -44,18 +44,17 @@ function CtrlBtn({ onClick, active, danger, title, children, label }: CtrlBtnPro
       whileTap={{ scale: 0.93 }}
       onClick={onClick}
       title={title}
-      className="flex flex-col items-center gap-1 group relative"
+      aria-label={title}
+      className="flex flex-col items-center gap-0.5 group relative"
     >
       <span
-        className={`ctrl-btn ${
-          active ? 'ctrl-btn-active' : ''
-        } ${danger ? 'ctrl-btn-danger' : ''}`}
+        className={`ctrl-btn ${active ? 'ctrl-btn-active' : ''} ${danger ? 'ctrl-btn-danger' : ''}`}
       >
         {children}
       </span>
       {label && (
         <span
-          className={`text-[10px] font-medium transition-colors ${
+          className={`hidden sm:block text-[9px] sm:text-[10px] font-medium transition-colors leading-none ${
             active
               ? 'text-sky-400'
               : danger
@@ -100,7 +99,7 @@ export default function Controls({
   }
 
   return (
-    <div className="relative glass px-4 md:px-6 py-2.5 rounded-2xl flex items-center gap-3 md:gap-5 shadow-[0_10px_35px_rgba(0,0,0,0.5)] border border-white/10 bg-dark-800/90 backdrop-blur-xl">
+    <div className="relative glass px-2 sm:px-4 md:px-6 py-2 sm:py-2.5 rounded-2xl flex items-center gap-1.5 sm:gap-3 md:gap-5 shadow-[0_10px_35px_rgba(0,0,0,0.5)] border border-white/10 bg-dark-800/90 backdrop-blur-xl max-w-full">
       {/* Mic */}
       <CtrlBtn
         onClick={onToggleMic}
@@ -108,7 +107,7 @@ export default function Controls({
         title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
         label={isMuted ? 'Unmute' : 'Mute'}
       >
-        {isMuted ? <MicOff className="w-5 h-5 text-red-400" /> : <Mic className="w-5 h-5" />}
+        {isMuted ? <MicOff className="w-4 h-4 sm:w-5 sm:h-5 text-red-400" /> : <Mic className="w-4 h-4 sm:w-5 sm:h-5" />}
       </CtrlBtn>
 
       {/* Camera */}
@@ -118,24 +117,24 @@ export default function Controls({
         title={isCameraOff ? 'Start camera' : 'Stop camera'}
         label={isCameraOff ? 'Start cam' : 'Stop cam'}
       >
-        {isCameraOff ? <VideoOff className="w-5 h-5 text-red-400" /> : <Video className="w-5 h-5" />}
+        {isCameraOff ? <VideoOff className="w-4 h-4 sm:w-5 sm:h-5 text-red-400" /> : <Video className="w-4 h-4 sm:w-5 sm:h-5" />}
       </CtrlBtn>
 
-      {/* Screen share */}
+      {/* Screen share — hidden on very small phones */}
       <CtrlBtn
         onClick={onToggleScreenShare}
         active={isScreenSharing}
-        title={isScreenSharing ? 'Stop screen share' : 'Share screen (60fps)'}
-        label={isScreenSharing ? 'Stop share' : 'Share'}
+        title={isScreenSharing ? 'Stop screen share' : 'Share screen'}
+        label={isScreenSharing ? 'Stop' : 'Share'}
       >
         {isScreenSharing ? (
-          <MonitorOff className="w-5 h-5 text-sky-400" />
+          <MonitorOff className="w-4 h-4 sm:w-5 sm:h-5 text-sky-400" />
         ) : (
-          <Monitor className="w-5 h-5" />
+          <Monitor className="w-4 h-4 sm:w-5 sm:h-5" />
         )}
       </CtrlBtn>
 
-      {/* Emoji Reactions (Google Meet Style) */}
+      {/* Emoji Reactions */}
       <div className="relative">
         <CtrlBtn
           onClick={() => setShowEmojiPicker((prev) => !prev)}
@@ -143,7 +142,7 @@ export default function Controls({
           title="Send reaction"
           label="React"
         >
-          <Smile className="w-5 h-5 text-amber-300" />
+          <Smile className="w-4 h-4 sm:w-5 sm:h-5 text-amber-300" />
         </CtrlBtn>
 
         {/* Emoji Popover */}
@@ -154,13 +153,13 @@ export default function Controls({
               animate={{ opacity: 1, scale: 1, y: -8 }}
               exit={{ opacity: 0, scale: 0.85, y: 10 }}
               transition={{ duration: 0.15 }}
-              className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 bg-dark-800/95 border border-white/10 rounded-2xl p-2 flex items-center gap-1.5 shadow-[0_15px_35px_rgba(0,0,0,0.6)] backdrop-blur-xl z-50"
+              className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 bg-dark-800/95 border border-white/10 rounded-2xl p-1.5 sm:p-2 flex items-center gap-1 sm:gap-1.5 shadow-[0_15px_35px_rgba(0,0,0,0.6)] backdrop-blur-xl z-50"
             >
               {EMOJIS.map((emoji) => (
                 <button
                   key={emoji}
                   onClick={() => handleEmojiClick(emoji)}
-                  className="w-10 h-10 rounded-xl hover:bg-white/10 text-2xl flex items-center justify-center transition-transform hover:scale-125 active:scale-95"
+                  className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl hover:bg-white/10 text-xl sm:text-2xl flex items-center justify-center transition-transform hover:scale-125 active:scale-95"
                   title={`React with ${emoji}`}
                 >
                   {emoji}
@@ -178,11 +177,11 @@ export default function Controls({
         title={isHandRaised ? 'Lower hand' : 'Raise hand'}
         label={isHandRaised ? 'Lower' : 'Raise'}
       >
-        <Hand className={`w-5 h-5 ${isHandRaised ? 'text-amber-400' : ''}`} />
+        <Hand className={`w-4 h-4 sm:w-5 sm:h-5 ${isHandRaised ? 'text-amber-400' : ''}`} />
       </CtrlBtn>
 
       {/* Divider */}
-      <div className="w-px h-8 bg-white/10 mx-0.5" />
+      <div className="w-px h-6 sm:h-8 bg-white/10 mx-0 sm:mx-0.5" />
 
       {/* Chat */}
       <CtrlBtn
@@ -191,7 +190,7 @@ export default function Controls({
         title="Chat panel"
         label="Chat"
       >
-        <MessageSquare className="w-5 h-5" />
+        <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5" />
       </CtrlBtn>
 
       {/* Participants */}
@@ -201,20 +200,20 @@ export default function Controls({
         title="People in room"
         label="People"
       >
-        <Users className="w-5 h-5" />
+        <Users className="w-4 h-4 sm:w-5 sm:h-5" />
       </CtrlBtn>
 
       {/* Divider */}
-      <div className="w-px h-8 bg-white/10 mx-0.5" />
+      <div className="w-px h-6 sm:h-8 bg-white/10 mx-0 sm:mx-0.5" />
 
-      {/* Leave Room Button */}
+      {/* Leave */}
       <CtrlBtn
         onClick={onLeave}
         danger={true}
         title="Leave call"
         label="Leave"
       >
-        <PhoneOff className="w-5 h-5" />
+        <PhoneOff className="w-4 h-4 sm:w-5 sm:h-5" />
       </CtrlBtn>
     </div>
   )

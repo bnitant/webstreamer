@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { joinRoom, Room } from 'trystero'
 import { useWebRTC, RemoteStreamEntry } from './useWebRTC'
-import { setMaxBitrate, CAMERA_BITRATE, SCREEN_SHARE_BITRATE } from '../webrtc'
+// webrtc.ts helpers (setMaxBitrate unused with Trystero — Trystero manages RTCPeerConnections internally)
 
 export interface ChatMessage {
   name:      string
@@ -217,12 +217,16 @@ export function useRoom(roomId: string): UseRoomReturn {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, localName])
 
-  // ── Share localStream once acquired ────────────────────────
+  // ── Share localStream once acquired (wait for room.ready first) ──
   useEffect(() => {
-    if (!roomRef.current || !webrtc.localStream) return
-    if (webrtc.localStream.getTracks().length > 0) {
-      roomRef.current.addStream(webrtc.localStream).catch(() => {})
-    }
+    const room = roomRef.current
+    if (!room || !webrtc.localStream) return
+    const stream = webrtc.localStream
+    if (stream.getTracks().length === 0) return
+    // Always wait for ready — idempotent if already resolved
+    room.ready.then(() => {
+      room.addStream(stream).catch(() => {})
+    }).catch(() => {})
   }, [webrtc.localStream])
 
   // ── Broadcast Mute / Camera Changes ────────────────────────

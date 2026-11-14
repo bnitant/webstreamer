@@ -4,8 +4,6 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   getCameraConstraints,
   getScreenShareConstraints,
-  setMaxBitrate,
-  SCREEN_SHARE_BITRATE,
 } from '../webrtc'
 
 export interface RemoteStreamEntry {
@@ -70,26 +68,66 @@ export function useWebRTC(): UseWebRTCReturn {
   }, [])
 
   // ── Mic toggle ───────────────────────────────────────────
-  const toggleMic = useCallback(() => {
+  const toggleMic = useCallback(async () => {
     if (!localStream) return
     const audioTracks = localStream.getAudioTracks()
-    if (audioTracks.length === 0) return
+
+    // If no audio track exists yet (e.g. initial access was not granted or failed), acquire it now
+    if (audioTracks.length === 0) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        })
+        const newTrack = stream.getAudioTracks()[0]
+        if (newTrack) {
+          localStream.addTrack(newTrack)
+          setLocalStream(new MediaStream(localStream.getTracks()))
+          setIsMuted(false)
+        }
+      } catch (err) {
+        console.warn('[useWebRTC] Failed to acquire microphone on toggle:', err)
+      }
+      return
+    }
+
+    const willMute = !isMuted
     audioTracks.forEach((t) => {
-      t.enabled = !t.enabled
+      t.enabled = !willMute
     })
-    setIsMuted((m) => !m)
-  }, [localStream])
+    setIsMuted(willMute)
+  }, [localStream, isMuted])
 
   // ── Camera toggle ────────────────────────────────────────
-  const toggleCamera = useCallback(() => {
+  const toggleCamera = useCallback(async () => {
     if (!localStream) return
     const videoTracks = localStream.getVideoTracks()
-    if (videoTracks.length === 0) return
+
+    // If no video track exists yet, acquire it now on user gesture
+    if (videoTracks.length === 0) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(getCameraConstraints())
+        const newTrack = stream.getVideoTracks()[0]
+        if (newTrack) {
+          localStream.addTrack(newTrack)
+          setLocalStream(new MediaStream(localStream.getTracks()))
+          setIsCameraOff(false)
+        }
+      } catch (err) {
+        console.warn('[useWebRTC] Failed to acquire camera on toggle:', err)
+      }
+      return
+    }
+
+    const willTurnOff = !isCameraOff
     videoTracks.forEach((t) => {
-      t.enabled = !t.enabled
+      t.enabled = !willTurnOff
     })
-    setIsCameraOff((c) => !c)
-  }, [localStream])
+    setIsCameraOff(willTurnOff)
+  }, [localStream, isCameraOff])
 
   // ── Screen share ─────────────────────────────────────────
   const startScreenShare = useCallback(async (onTrackReady?: (track: MediaStreamTrack) => void): Promise<MediaStream | null> => {
