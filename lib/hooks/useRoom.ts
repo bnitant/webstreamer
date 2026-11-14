@@ -1,8 +1,38 @@
-import { useEffect, useRef, useCallback } from 'react'
+'use client'
+
+import { useEffect, useRef, useCallback, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { joinRoom, Room } from 'trystero'
 import { useWebRTC, RemoteStreamEntry } from './useWebRTC'
-import { useSocket, ChatMessage, Participant, ReactionItem } from './useSocket'
-import { RTC_CONFIG, setMaxBitrate, CAMERA_BITRATE, SCREEN_SHARE_BITRATE } from '../webrtc'
+import { setMaxBitrate, CAMERA_BITRATE, SCREEN_SHARE_BITRATE } from '../webrtc'
+
+export interface ChatMessage {
+  name:      string
+  text:      string
+  timestamp: number
+}
+
+export interface Participant {
+  peerId:      string
+  name:        string
+  isMuted:     boolean
+  isCameraOff: boolean
+  quality:     'good' | 'fair' | 'poor'
+}
+
+export interface ReactionItem {
+  id:        string
+  from:      string
+  name:      string
+  emoji:     string
+  timestamp: number
+}
+
+interface PeerMeta {
+  name:        string
+  isMuted:     boolean
+  isCameraOff: boolean
+}
 
 interface UseRoomReturn {
   localStream:        ReturnType<typeof useWebRTC>['localStream']
@@ -39,187 +69,218 @@ function getLocalName(): string {
 export function useRoom(roomId: string): UseRoomReturn {
   const router = useRouter()
   const localName = getLocalName()
-
   const webrtc = useWebRTC()
-  const socket = useSocket(roomId, localName)
 
-  // Map of peerId -> RTCPeerConnection
-  const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map())
-  const makingOffer = useRef<Set<string>>(new Set())
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [participants, setParticipants] = useState<Participant[]>([])
+  const [reactions, setReactions] = useState<ReactionItem[]>([])
+  const [isConnected, setIsConnected] = useState(false)
 
-  // ── Create / get RTCPeerConnection ────────────────────────
-  const getOrCreatePC = useCallback((peerId: string): RTCPeerConnection => {
-    if (pcsRef.current.has(peerId)) return pcsRef.current.get(peerId)!
+  const roomRef = useRef<Room | null>(null)
+  const sendChatRef = useRef<((data: ChatMessage) => Promise<void>) | null>(null)
+  const sendReactionRef = useRef<((data: ReactionItem) => Promise<void>) | null>(null)
+  const sendMetaRef = useRef<((data: PeerMeta) => Promise<void>) | null>(null)
+  const metaMapRef = useRef<Map<string, PeerMeta>>(new Map())
 
-    const pc = new RTCPeerConnection(RTC_CONFIG)
+  // ── Initialize Trystero Room ───────────────────────────────
+  useEffect(() => {
+    if (!roomId || typeof window === 'undefined') return
 
-    // Add local tracks
-    const activeStream = webrtc.isScreenSharing && webrtc.screenStream ? webrtc.screenStream : webrtc.localStream
-    const audioTracks = activeStream ? activeStream.getAudioTracks() : []
-    const videoTracks = activeStream ? activeStream.getVideoTracks() : []
+    // Clean roomId for topic
+    const safeTopic = roomId.toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32)
+    const room = joinRoom({ appId: 'webstreamer-net' }, safeTopic)
+    roomRef.current = room
 
-    if (audioTracks.length > 0) {
-      audioTracks.forEach((track) => pc.addTrack(track, activeStream!))
-    } else {
-      // Ensure we can receive remote audio even if user has no microphone
-      try { pc.addTransceiver('audio', { direction: 'recvonly' }) } catch {}
-    }
+    // Setup action channels (Trystero 0.27 returns MessageAction objects)
+    const chatAction = room.makeAction<ChatMessage>('chat')
+    const reactionAction = room.makeAction<ReactionItem>('reaction')
+    const metaAction = room.makeAction<PeerMeta>('meta')
 
-    if (videoTracks.length > 0) {
-      videoTracks.forEach((track) => {
-        const sender = pc.addTrack(track, activeStream!)
-        setMaxBitrate(sender, webrtc.isScreenSharing ? SCREEN_SHARE_BITRATE : CAMERA_BITRATE)
+    sendChatRef.current = (data) => chatAction.send(data)
+    sendReactionRef.current = (data) => reactionAction.send(data)
+    sendMetaRef.current = (data) => metaAction.send(data)
+
+    room.ready.then(() => {
+      setIsConnected(true)
+    }).catch(console.warn)
+
+    // ── Incoming Chat Messages ──────────────────────────────
+    chatAction.onMessage((msg) => {
+      setMessages((prev) => [...prev, msg])
+    })
+
+    // ── Incoming Emoji Reactions ────────────────────────────
+    reactionAction.onMessage((reaction) => {
+      const item: ReactionItem = {
+        ...reaction,
+        id: Math.random().toString(36).slice(2),
+        timestamp: Date.now(),
+      }
+      setReactions((prev) => [...prev, item])
+      setTimeout(() => {
+        setReactions((prev) => prev.filter((r) => r.id !== item.id))
+      }, 4000)
+    })
+
+    // ── Incoming Peer Metadata (Name, Mute state, Camera) ──
+    metaAction.onMessage((meta, context) => {
+      const peerId = context?.peerId || ''
+      if (!peerId) return
+      metaMapRef.current.set(peerId, meta)
+
+      setParticipants((prev) => {
+        const existing = prev.find((p) => p.peerId === peerId)
+        if (existing) {
+          return prev.map((p) =>
+            p.peerId === peerId
+              ? { ...p, name: meta.name, isMuted: meta.isMuted, isCameraOff: meta.isCameraOff }
+              : p
+          )
+        }
+        return [
+          ...prev,
+          {
+            peerId,
+            name: meta.name,
+            isMuted: meta.isMuted,
+            isCameraOff: meta.isCameraOff,
+            quality: 'good',
+          },
+        ]
       })
-    } else {
-      // Ensure we can receive remote video even if user has no camera
-      try { pc.addTransceiver('video', { direction: 'recvonly' }) } catch {}
-    }
 
-    // Always create a data channel to guarantee active data exchange and valid SDP sections
-    try {
-      pc.createDataChannel('data')
-    } catch {}
-
-    // Handle incoming remote tracks
-    pc.ontrack = (event) => {
-      const [remoteStream] = event.streams
-      if (remoteStream) {
-        webrtc.addRemoteStream(peerId, remoteStream, '')
-      }
-    }
-
-    // ICE candidate forwarding
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        socket.emitIceCandidate(peerId, event.candidate.toJSON())
-      }
-    }
-
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-        webrtc.removeRemoteStream(peerId)
-        pcsRef.current.delete(peerId)
-      }
-    }
-
-    pcsRef.current.set(peerId, pc)
-    return pc
-  }, [webrtc, socket])
-
-  // ── Signaling: user joined → create offer ─────────────────
-  useEffect(() => {
-    socket.onUserJoined(async ({ socketId }) => {
-      if (makingOffer.current.has(socketId)) return
-      makingOffer.current.add(socketId)
-
-      try {
-        const pc = getOrCreatePC(socketId)
-        const offer = await pc.createOffer({
-          offerToReceiveAudio: true,
-          offerToReceiveVideo: true,
-        })
-        await pc.setLocalDescription(offer)
-        socket.emitOffer(socketId, pc.localDescription!)
-      } catch (err) {
-        console.warn('[useRoom] createOffer error:', err)
-      } finally {
-        makingOffer.current.delete(socketId)
-      }
-    })
-  }, [socket.onUserJoined, getOrCreatePC, socket])
-
-  // ── Signaling: receive offer → answer ────────────────────
-  useEffect(() => {
-    socket.onOffer(async (from, offer) => {
-      try {
-        const pc = getOrCreatePC(from)
-        await pc.setRemoteDescription(new RTCSessionDescription(offer))
-        const answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
-        socket.emitAnswer(from, pc.localDescription!)
-      } catch (err) {
-        console.warn('[useRoom] handle offer error:', err)
-      }
-    })
-  }, [socket.onOffer, getOrCreatePC, socket])
-
-  // ── Signaling: receive answer ─────────────────────────────
-  useEffect(() => {
-    socket.onAnswer(async (from, answer) => {
-      const pc = pcsRef.current.get(from)
-      if (!pc) return
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription(answer))
-      } catch (err) {
-        console.warn('[useRoom] handle answer error:', err)
-      }
-    })
-  }, [socket.onAnswer])
-
-  // ── Signaling: ICE candidates ─────────────────────────────
-  useEffect(() => {
-    socket.onIceCandidate(async (from, candidate) => {
-      const pc = pcsRef.current.get(from)
-      if (!pc) return
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate))
-      } catch (err) {
-        // Can safely ignore candidate errors during transition
-      }
-    })
-  }, [socket.onIceCandidate])
-
-  // ── User left ─────────────────────────────────────────────
-  useEffect(() => {
-    socket.onUserLeft((socketId) => {
-      const pc = pcsRef.current.get(socketId)
-      if (pc) {
-        pc.close()
-        pcsRef.current.delete(socketId)
-      }
-      webrtc.removeRemoteStream(socketId)
-    })
-  }, [socket.onUserLeft, webrtc])
-
-  // ── Cleanup on unmount ────────────────────────────────────
-  useEffect(() => {
-    return () => {
-      pcsRef.current.forEach((pc) => pc.close())
-      pcsRef.current.clear()
-    }
-  }, [])
-
-  // ── Screen share with anti-lag track broadcasting ──────────
-  const startScreenShare = useCallback(async () => {
-    await webrtc.startScreenShare((screenTrack) => {
-      // Replace video track in all active peer connections
-      pcsRef.current.forEach((pc) => {
-        const sender = pc.getSenders().find((s) => s.track?.kind === 'video')
-        if (sender) {
-          sender.replaceTrack(screenTrack).then(() => {
-            setMaxBitrate(sender, SCREEN_SHARE_BITRATE)
-          }).catch(console.warn)
+      // Update name in remote streams
+      webrtc.remoteStreams.forEach((rs) => {
+        if (rs.peerId === peerId) {
+          rs.name = meta.name
         }
       })
     })
+
+    // ── Peer Joined ─────────────────────────────────────────
+    room.onPeerJoin((context) => {
+      const peerId = context?.peerId || ''
+      if (!peerId) return
+
+      // Announce our metadata to the new peer
+      metaAction.send({
+        name: localName,
+        isMuted: webrtc.isMuted,
+        isCameraOff: webrtc.isCameraOff,
+      }).catch(console.warn)
+
+      // If we have an active stream with tracks, share it
+      const stream = webrtc.isScreenSharing && webrtc.screenStream ? webrtc.screenStream : webrtc.localStream
+      if (stream && stream.getTracks().length > 0) {
+        room.addStream(stream).catch(console.warn)
+      }
+    })
+
+    // ── Peer Left ───────────────────────────────────────────
+    room.onPeerLeave((context) => {
+      const peerId = context?.peerId || ''
+      if (!peerId) return
+      metaMapRef.current.delete(peerId)
+      setParticipants((prev) => prev.filter((p) => p.peerId !== peerId))
+      webrtc.removeRemoteStream(peerId)
+    })
+
+    // ── Incoming Remote Stream ──────────────────────────────
+    room.onPeerStream((stream: MediaStream, context) => {
+      const peerId = context?.peerId || ''
+      if (!peerId) return
+      const meta = metaMapRef.current.get(peerId)
+      const name = meta?.name || 'Friend'
+      webrtc.addRemoteStream(peerId, stream, name)
+    })
+
+    return () => {
+      room.leave().catch(() => {})
+      roomRef.current = null
+      setIsConnected(false)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, localName])
+
+  // ── Share localStream once acquired ────────────────────────
+  useEffect(() => {
+    if (!roomRef.current || !webrtc.localStream) return
+    if (webrtc.localStream.getTracks().length > 0) {
+      roomRef.current.addStream(webrtc.localStream).catch(() => {})
+    }
+  }, [webrtc.localStream])
+
+  // ── Broadcast Mute / Camera Changes ────────────────────────
+  useEffect(() => {
+    if (sendMetaRef.current) {
+      sendMetaRef.current({
+        name: localName,
+        isMuted: webrtc.isMuted,
+        isCameraOff: webrtc.isCameraOff,
+      }).catch(() => {})
+    }
+  }, [webrtc.isMuted, webrtc.isCameraOff, localName])
+
+  // ── Screen Share with Anti-Lag Bitrate ─────────────────────
+  const startScreenShare = useCallback(async () => {
+    const screen = await webrtc.startScreenShare()
+    if (!screen || !roomRef.current) return
+
+    const screenTrack = screen.getVideoTracks()[0]
+    const localVideoTrack = webrtc.localStream?.getVideoTracks()[0]
+
+    if (localVideoTrack && screenTrack) {
+      roomRef.current.replaceTrack(localVideoTrack, screenTrack).catch(() => {
+        roomRef.current?.addStream(screen).catch(console.warn)
+      })
+    } else {
+      roomRef.current.addStream(screen).catch(console.warn)
+    }
   }, [webrtc])
 
   const stopScreenShare = useCallback(() => {
-    webrtc.stopScreenShare((cameraTrack) => {
-      pcsRef.current.forEach((pc) => {
-        const sender = pc.getSenders().find((s) => s.track?.kind === 'video')
-        if (sender && cameraTrack) {
-          sender.replaceTrack(cameraTrack).then(() => {
-            setMaxBitrate(sender, CAMERA_BITRATE)
-          }).catch(console.warn)
-        }
-      })
-    })
+    const screen = webrtc.screenStream
+    const localVideoTrack = webrtc.localStream?.getVideoTracks()[0]
+
+    webrtc.stopScreenShare()
+
+    if (!roomRef.current) return
+    if (screen && localVideoTrack) {
+      const screenTrack = screen.getVideoTracks()[0]
+      if (screenTrack) {
+        roomRef.current.replaceTrack(screenTrack, localVideoTrack).catch(console.warn)
+      }
+    } else if (screen) {
+      roomRef.current.removeStream(screen)
+    }
   }, [webrtc])
 
+  // ── Send Chat Message ─────────────────────────────────────
+  const sendMessage = useCallback((text: string) => {
+    const msg: ChatMessage = { name: localName, text, timestamp: Date.now() }
+    setMessages((prev) => [...prev, msg])
+    sendChatRef.current?.(msg).catch(console.warn)
+  }, [localName])
+
+  // ── Send Emoji Reaction ───────────────────────────────────
+  const sendReaction = useCallback((emoji: string) => {
+    const item: ReactionItem = {
+      id: Math.random().toString(36).slice(2),
+      from: 'local',
+      name: localName,
+      emoji,
+      timestamp: Date.now(),
+    }
+    setReactions((prev) => [...prev, item])
+    setTimeout(() => {
+      setReactions((prev) => prev.filter((r) => r.id !== item.id))
+    }, 4000)
+    sendReactionRef.current?.(item).catch(console.warn)
+  }, [localName])
+
+  // ── Leave Room ────────────────────────────────────────────
   const leaveRoom = useCallback(() => {
-    pcsRef.current.forEach((pc) => pc.close())
-    pcsRef.current.clear()
+    roomRef.current?.leave().catch(() => {})
     webrtc.localStream?.getTracks().forEach((t) => t.stop())
     webrtc.screenStream?.getTracks().forEach((t) => t.stop())
     router.push('/')
@@ -232,17 +293,17 @@ export function useRoom(roomId: string): UseRoomReturn {
     isMuted:          webrtc.isMuted,
     isCameraOff:      webrtc.isCameraOff,
     isScreenSharing:  webrtc.isScreenSharing,
-    messages:         socket.messages,
-    participants:     socket.participants,
-    reactions:        socket.reactions,
-    isConnected:      socket.isConnected,
+    messages,
+    participants,
+    reactions,
+    isConnected,
     localName,
     toggleMic:        webrtc.toggleMic,
     toggleCamera:     webrtc.toggleCamera,
     startScreenShare,
     stopScreenShare,
-    sendMessage:      socket.sendMessage,
-    sendReaction:     socket.sendReaction,
+    sendMessage,
+    sendReaction,
     leaveRoom,
   }
 }
