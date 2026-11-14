@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import {
   Mic, MicOff,
   Video, VideoOff,
@@ -7,8 +8,10 @@ import {
   MessageSquare,
   Users,
   PhoneOff,
+  Smile,
+  Hand,
 } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 
 interface ControlsProps {
   isMuted:            boolean
@@ -21,6 +24,7 @@ interface ControlsProps {
   onToggleScreenShare:() => void
   onToggleChat:       () => void
   onToggleParticipants:() => void
+  onSendReaction?:    (emoji: string) => void
   onLeave:            () => void
 }
 
@@ -30,8 +34,6 @@ interface CtrlBtnProps {
   danger?:    boolean
   title:      string
   children:   React.ReactNode
-  activeLabel?:string
-  inactiveLabel?:string
   label?:     string
 }
 
@@ -42,26 +44,33 @@ function CtrlBtn({ onClick, active, danger, title, children, label }: CtrlBtnPro
       whileTap={{ scale: 0.93 }}
       onClick={onClick}
       title={title}
-      className={`flex flex-col items-center gap-1.5 group`}
+      className="flex flex-col items-center gap-1 group relative"
     >
       <span
-        className={`ctrl-btn
-          ${active ? 'ctrl-btn-active' : ''}
-          ${danger ? 'ctrl-btn-danger' : ''}
-        `}
+        className={`ctrl-btn ${
+          active ? 'ctrl-btn-active' : ''
+        } ${danger ? 'ctrl-btn-danger' : ''}`}
       >
         {children}
       </span>
       {label && (
-        <span className={`text-[10px] font-medium transition-colors ${
-          active ? 'text-sky-400' : danger ? 'text-red-400' : 'text-slate-500 group-hover:text-slate-300'
-        }`}>
+        <span
+          className={`text-[10px] font-medium transition-colors ${
+            active
+              ? 'text-sky-400'
+              : danger
+              ? 'text-red-400'
+              : 'text-slate-500 group-hover:text-slate-300'
+          }`}
+        >
           {label}
         </span>
       )}
     </motion.button>
   )
 }
+
+const EMOJIS = ['💖', '👍', '👏', '🎉', '😂', '🔥', '🙌', '✨']
 
 export default function Controls({
   isMuted,
@@ -74,20 +83,32 @@ export default function Controls({
   onToggleScreenShare,
   onToggleChat,
   onToggleParticipants,
+  onSendReaction,
   onLeave,
 }: ControlsProps) {
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+  const [isHandRaised, setIsHandRaised] = useState(false)
+
+  const handleEmojiClick = (emoji: string) => {
+    onSendReaction?.(emoji)
+    setShowEmojiPicker(false)
+  }
+
+  const handleRaiseHand = () => {
+    setIsHandRaised((prev) => !prev)
+    onSendReaction?.(isHandRaised ? ' lowered hand' : '✋')
+  }
+
   return (
-    <div className="glass px-6 py-3 rounded-2xl flex items-center gap-4 md:gap-6 shadow-glow-sm">
+    <div className="relative glass px-4 md:px-6 py-2.5 rounded-2xl flex items-center gap-3 md:gap-5 shadow-[0_10px_35px_rgba(0,0,0,0.5)] border border-white/10 bg-dark-800/90 backdrop-blur-xl">
       {/* Mic */}
       <CtrlBtn
         onClick={onToggleMic}
         active={!isMuted}
-        title={isMuted ? 'Unmute' : 'Mute'}
+        title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
         label={isMuted ? 'Unmute' : 'Mute'}
       >
-        {isMuted
-          ? <MicOff className="w-5 h-5 text-red-400" />
-          : <Mic    className="w-5 h-5" />}
+        {isMuted ? <MicOff className="w-5 h-5 text-red-400" /> : <Mic className="w-5 h-5" />}
       </CtrlBtn>
 
       {/* Camera */}
@@ -97,31 +118,77 @@ export default function Controls({
         title={isCameraOff ? 'Start camera' : 'Stop camera'}
         label={isCameraOff ? 'Start cam' : 'Stop cam'}
       >
-        {isCameraOff
-          ? <VideoOff className="w-5 h-5 text-red-400" />
-          : <Video    className="w-5 h-5" />}
+        {isCameraOff ? <VideoOff className="w-5 h-5 text-red-400" /> : <Video className="w-5 h-5" />}
       </CtrlBtn>
 
       {/* Screen share */}
       <CtrlBtn
         onClick={onToggleScreenShare}
         active={isScreenSharing}
-        title={isScreenSharing ? 'Stop sharing' : 'Share screen'}
+        title={isScreenSharing ? 'Stop screen share' : 'Share screen (60fps)'}
         label={isScreenSharing ? 'Stop share' : 'Share'}
       >
-        {isScreenSharing
-          ? <MonitorOff className="w-5 h-5 text-sky-400" />
-          : <Monitor    className="w-5 h-5" />}
+        {isScreenSharing ? (
+          <MonitorOff className="w-5 h-5 text-sky-400" />
+        ) : (
+          <Monitor className="w-5 h-5" />
+        )}
+      </CtrlBtn>
+
+      {/* Emoji Reactions (Google Meet Style) */}
+      <div className="relative">
+        <CtrlBtn
+          onClick={() => setShowEmojiPicker((prev) => !prev)}
+          active={showEmojiPicker}
+          title="Send reaction"
+          label="React"
+        >
+          <Smile className="w-5 h-5 text-amber-300" />
+        </CtrlBtn>
+
+        {/* Emoji Popover */}
+        <AnimatePresence>
+          {showEmojiPicker && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.85, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: -8 }}
+              exit={{ opacity: 0, scale: 0.85, y: 10 }}
+              transition={{ duration: 0.15 }}
+              className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 bg-dark-800/95 border border-white/10 rounded-2xl p-2 flex items-center gap-1.5 shadow-[0_15px_35px_rgba(0,0,0,0.6)] backdrop-blur-xl z-50"
+            >
+              {EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  onClick={() => handleEmojiClick(emoji)}
+                  className="w-10 h-10 rounded-xl hover:bg-white/10 text-2xl flex items-center justify-center transition-transform hover:scale-125 active:scale-95"
+                  title={`React with ${emoji}`}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Raise Hand */}
+      <CtrlBtn
+        onClick={handleRaiseHand}
+        active={isHandRaised}
+        title={isHandRaised ? 'Lower hand' : 'Raise hand'}
+        label={isHandRaised ? 'Lower' : 'Raise'}
+      >
+        <Hand className={`w-5 h-5 ${isHandRaised ? 'text-amber-400' : ''}`} />
       </CtrlBtn>
 
       {/* Divider */}
-      <div className="w-px h-8 bg-white/10 mx-1" />
+      <div className="w-px h-8 bg-white/10 mx-0.5" />
 
       {/* Chat */}
       <CtrlBtn
         onClick={onToggleChat}
         active={showChat}
-        title="Chat"
+        title="Chat panel"
         label="Chat"
       >
         <MessageSquare className="w-5 h-5" />
@@ -131,20 +198,20 @@ export default function Controls({
       <CtrlBtn
         onClick={onToggleParticipants}
         active={showParticipants}
-        title="Participants"
+        title="People in room"
         label="People"
       >
         <Users className="w-5 h-5" />
       </CtrlBtn>
 
       {/* Divider */}
-      <div className="w-px h-8 bg-white/10 mx-1" />
+      <div className="w-px h-8 bg-white/10 mx-0.5" />
 
-      {/* Leave */}
+      {/* Leave Room Button */}
       <CtrlBtn
         onClick={onLeave}
         danger={true}
-        title="Leave room"
+        title="Leave call"
         label="Leave"
       >
         <PhoneOff className="w-5 h-5" />

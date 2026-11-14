@@ -1,11 +1,10 @@
 'use client'
 
 /**
- * useSocket — Serverless Real-time Signaling & Chat
+ * useSocket — Serverless Real-time Signaling, Chat & Reactions
  *
- * Uses public SSE pub/sub (ntfy.sh) for WebRTC offer/answer/ICE exchange
- * and presence discovery. Runs 100% in the browser with zero server cost,
- * no WebSockets upgrade issues on Vercel, and no stale sessionStorage IDs.
+ * Uses public SSE pub/sub (ntfy.sh) for WebRTC offer/answer/ICE exchange,
+ * presence discovery, live chat, and emoji reactions.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -24,6 +23,14 @@ export interface Participant {
   quality:     'good' | 'fair' | 'poor'
 }
 
+export interface ReactionItem {
+  id:        string
+  from:      string
+  name:      string
+  emoji:     string
+  timestamp: number
+}
+
 type SignalMessage =
   | { type: 'join';           from: string; name: string }
   | { type: 'present';        from: string; to: string; name: string }
@@ -32,13 +39,16 @@ type SignalMessage =
   | { type: 'answer';         from: string; to: string; answer: RTCSessionDescriptionInit }
   | { type: 'ice-candidate';  from: string; to: string; candidate: RTCIceCandidateInit }
   | { type: 'chat';           from: string; msg: ChatMessage }
+  | { type: 'reaction';       from: string; name: string; emoji: string }
 
 interface UseSocketReturn {
   myId:             string
   messages:         ChatMessage[]
   participants:     Participant[]
+  reactions:        ReactionItem[]
   isConnected:      boolean
   sendMessage:      (text: string) => void
+  sendReaction:     (emoji: string) => void
   emitOffer:        (to: string, offer: RTCSessionDescriptionInit) => void
   emitAnswer:       (to: string, answer: RTCSessionDescriptionInit) => void
   emitIceCandidate: (to: string, candidate: RTCIceCandidateInit) => void
@@ -60,6 +70,7 @@ export function useSocket(roomId: string, name: string): UseSocketReturn {
   const [myId] = useState(() => 'u_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3))
   const [messages,     setMessages]     = useState<ChatMessage[]>([])
   const [participants, setParticipants] = useState<Participant[]>([])
+  const [reactions,    setReactions]    = useState<ReactionItem[]>([])
   const [isConnected,  setIsConnected]  = useState(false)
 
   // Callback refs to avoid stale closures
@@ -117,14 +128,12 @@ export function useSocket(roomId: string, name: string): UseSocketReturn {
 
           switch (data.type) {
             case 'join': {
-              // Add new participant
               setParticipants((prev) => {
                 if (prev.find((p) => p.peerId === data.from)) return prev
                 return [...prev, { peerId: data.from, name: data.name, isMuted: false, isCameraOff: false, quality: 'good' }]
               })
               // Acknowledge our presence so the new joiner knows we are already here
               postSignal({ type: 'present', from: myId, to: data.from, name })
-              // Fire WebRTC offer initiation
               onUserJoinedCbRef.current?.({ socketId: data.from, name: data.name })
               break
             }
@@ -167,6 +176,21 @@ export function useSocket(roomId: string, name: string): UseSocketReturn {
               break
             }
 
+            case 'reaction': {
+              const item: ReactionItem = {
+                id: Math.random().toString(36).slice(2),
+                from: data.from,
+                name: data.name,
+                emoji: data.emoji,
+                timestamp: Date.now(),
+              }
+              setReactions((prev) => [...prev, item])
+              setTimeout(() => {
+                setReactions((prev) => prev.filter((r) => r.id !== item.id))
+              }, 4000)
+              break
+            }
+
             case 'leave': {
               setParticipants((prev) => prev.filter((p) => p.peerId !== data.from))
               onUserLeftCbRef.current?.(data.from)
@@ -174,7 +198,7 @@ export function useSocket(roomId: string, name: string): UseSocketReturn {
             }
           }
         } catch {
-          // Non-JSON or keepalive packet, ignore
+          // Keepalive or parse error
         }
       }
 
@@ -201,6 +225,21 @@ export function useSocket(roomId: string, name: string): UseSocketReturn {
     const msg: ChatMessage = { name, text, timestamp: Date.now() }
     setMessages((prev) => [...prev, msg])
     postSignal({ type: 'chat', from: myId, msg })
+  }, [name, myId, postSignal])
+
+  const sendReaction = useCallback((emoji: string) => {
+    const item: ReactionItem = {
+      id: Math.random().toString(36).slice(2),
+      from: myId,
+      name,
+      emoji,
+      timestamp: Date.now(),
+    }
+    setReactions((prev) => [...prev, item])
+    setTimeout(() => {
+      setReactions((prev) => prev.filter((r) => r.id !== item.id))
+    }, 4000)
+    postSignal({ type: 'reaction', from: myId, name, emoji })
   }, [name, myId, postSignal])
 
   const emitOffer = useCallback((to: string, offer: RTCSessionDescriptionInit) => {
@@ -239,8 +278,10 @@ export function useSocket(roomId: string, name: string): UseSocketReturn {
     myId,
     messages,
     participants,
+    reactions,
     isConnected,
     sendMessage,
+    sendReaction,
     emitOffer,
     emitAnswer,
     emitIceCandidate,

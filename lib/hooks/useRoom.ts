@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useWebRTC, RemoteStreamEntry } from './useWebRTC'
-import { useSocket, ChatMessage, Participant } from './useSocket'
+import { useSocket, ChatMessage, Participant, ReactionItem } from './useSocket'
 import { RTC_CONFIG, setMaxBitrate, CAMERA_BITRATE, SCREEN_SHARE_BITRATE } from '../webrtc'
 
 interface UseRoomReturn {
@@ -13,6 +13,7 @@ interface UseRoomReturn {
   isScreenSharing:    boolean
   messages:           ChatMessage[]
   participants:       Participant[]
+  reactions:          ReactionItem[]
   isConnected:        boolean
   localName:          string
   toggleMic:          () => void
@@ -20,6 +21,7 @@ interface UseRoomReturn {
   startScreenShare:   () => Promise<void>
   stopScreenShare:    () => void
   sendMessage:        (text: string) => void
+  sendReaction:       (emoji: string) => void
   leaveRoom:          () => void
 }
 
@@ -232,6 +234,7 @@ export function useRoom(roomId: string): UseRoomReturn {
     isScreenSharing:  webrtc.isScreenSharing,
     messages:         socket.messages,
     participants:     socket.participants,
+    reactions:        socket.reactions,
     isConnected:      socket.isConnected,
     localName,
     toggleMic:        webrtc.toggleMic,
@@ -239,6 +242,7 @@ export function useRoom(roomId: string): UseRoomReturn {
     startScreenShare,
     stopScreenShare,
     sendMessage:      socket.sendMessage,
+    sendReaction:     socket.sendReaction,
     leaveRoom,
   }
 }
